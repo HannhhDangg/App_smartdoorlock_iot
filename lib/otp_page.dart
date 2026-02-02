@@ -12,59 +12,71 @@ class OtpPage extends StatefulWidget {
 
 class _OtpPageState extends State<OtpPage> {
   String otpCode = "------";
-  int _secondsRemaining = 300;
+  int _secondsRemaining = 0;
   Timer? _timer;
-  StreamSubscription<DatabaseEvent>? _otpSubscription; // Để hủy lắng nghe khi chuyển trang
+  StreamSubscription<DatabaseEvent>? _otpSubscription;
   
   final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
 
   @override
   void initState() {
     super.initState();
-    // 1. Lắng nghe mã OTP từ Firebase để không bị mất khi chuyển trang
-    _otpSubscription = _dbRef.child("current_otp").onValue.listen((event) {
-      final data = event.snapshot.value;
+    _listenToFirebase();
+  }
+
+  void _listenToFirebase() {
+    // Lắng nghe cả mã OTP và thời điểm hết hạn từ Firebase
+    _otpSubscription = _dbRef.onValue.listen((event) {
+      final data = event.snapshot.value as Map?;
       if (mounted && data != null) {
         setState(() {
-          otpCode = data.toString();
-          // Nếu mã mới được tạo từ thiết bị khác, reset lại bộ đếm 5 phút
-          if (otpCode != "EXPIRED" && otpCode != "expired" && otpCode != "------") {
-            _startTimer();
+          otpCode = data['current_otp']?.toString() ?? "------";
+          
+          // Tính toán lại giây còn lại dựa trên timestamp trên Cloud
+          int expiry = data['expiry_time'] ?? 0;
+          int now = DateTime.now().millisecondsSinceEpoch;
+          _secondsRemaining = ((expiry - now) / 1000).round();
+
+          if (_secondsRemaining > 0 && otpCode != "expired") {
+            _startLocalTimer();
+          } else {
+            otpCode = "EXPIRED";
+            _secondsRemaining = 0;
           }
         });
       }
     });
   }
 
-  void _startTimer() {
+  void _startLocalTimer() {
     _timer?.cancel();
-    _secondsRemaining = 300;
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
+      if (mounted && _secondsRemaining > 0) {
         setState(() {
-          if (_secondsRemaining > 0) {
-            _secondsRemaining--;
-          } else {
-            otpCode = "EXPIRED";
-            _dbRef.child("current_otp").set("expired");
-            _timer?.cancel();
-          }
+          _secondsRemaining--;
         });
+      } else {
+        _timer?.cancel();
       }
     });
   }
 
   void generateOTP() {
-    // Tạo mã 6 số mới và đẩy lên Firebase
     String newCode = (Random().nextInt(900000) + 100000).toString();
-    _dbRef.child("current_otp").set(newCode);
-    _startTimer(); // Bắt đầu đếm ngược ngay lập tức
+    // Tính thời điểm hết hạn = Hiện tại + 5 phút (300,000 milliseconds)
+    int expiryTime = DateTime.now().millisecondsSinceEpoch + 300000;
+
+    // Đẩy cả 2 giá trị lên Firebase để mọi thiết bị đều thấy chung một mốc thời gian
+    _dbRef.update({
+      "current_otp": newCode,
+      "expiry_time": expiryTime,
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _otpSubscription?.cancel(); // Hủy lắng nghe Firebase để tránh rò rỉ bộ nhớ
+    _otpSubscription?.cancel();
     super.dispose();
   }
 
@@ -78,10 +90,7 @@ class _OtpPageState extends State<OtpPage> {
           children: [
             const Icon(Icons.security, size: 80, color: Colors.blue),
             const SizedBox(height: 30),
-            const Text(
-              "MÃ OTP HIỆN TẠI TRÊN CLOUD",
-              style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.bold),
-            ),
+            const Text("MÃ OTP THỜI GIAN THỰC", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
             const SizedBox(height: 10),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
@@ -92,16 +101,11 @@ class _OtpPageState extends State<OtpPage> {
               ),
               child: Text(
                 otpCode,
-                style: const TextStyle(
-                  fontSize: 50, 
-                  letterSpacing: 5, 
-                  fontWeight: FontWeight.bold, 
-                  color: Colors.blue
-                ),
+                style: const TextStyle(fontSize: 50, letterSpacing: 5, fontWeight: FontWeight.bold, color: Colors.blue),
               ),
             ),
             const SizedBox(height: 20),
-            if (otpCode != "EXPIRED" && otpCode != "expired" && otpCode != "------")
+            if (_secondsRemaining > 0)
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -109,22 +113,15 @@ class _OtpPageState extends State<OtpPage> {
                 const SizedBox(width: 8),
                 Text(
                   "Hiệu lực còn: ${(_secondsRemaining ~/ 60).toString().padLeft(2, '0')}:${(_secondsRemaining % 60).toString().padLeft(2, '0')}",
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w500,
-                    color: _secondsRemaining < 30 ? Colors.red : Colors.black87,
-                  ),
+                  style: TextStyle(fontSize: 18, color: _secondsRemaining < 30 ? Colors.red : Colors.black87),
                 ),
               ],
             ),
             const SizedBox(height: 50),
             ElevatedButton(
               onPressed: generateOTP,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-              ),
-              child: const Text("TẠO MÃ MỚI", style: TextStyle(fontSize: 18)),
+              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)),
+              child: const Text("TẠO MÃ MỚI"),
             ),
           ],
         ),
