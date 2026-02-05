@@ -5,6 +5,8 @@ import 'package:firebase_core/firebase_core.dart'; // Thêm dòng này
 import 'firebase_options.dart'; // Thêm dòng này
 import 'history_page.dart';
 import 'member_page.dart';
+import 'otp_page.dart';
+import 'history_page.dart';
 
 void main() async {
   // Đảm bảo các dịch vụ hệ thống được khởi tạo
